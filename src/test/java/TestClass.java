@@ -15,6 +15,7 @@ import org.junit.runner.RunWith;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.netty.util.internal.PlatformDependent;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -47,7 +48,7 @@ public class TestClass {
 	private static Future<HttpServer> startVertxHttpServer(Vertx vertx, int port, boolean logActivity) {
 		LOGGER.info("Starting Vert.x HttpServer.");
 		HttpServer httpServer = vertx.createHttpServer(new HttpServerOptions()
-				.setHost("localhost")
+				.setHost("0.0.0.0")
 				.setPort(port)
 				.setLogActivity(logActivity));
 		Router router = Router.router(vertx);
@@ -73,7 +74,7 @@ public class TestClass {
 					"",
 					"http {",
 					"  server {",
-					"    listen " + loadbalancerPort + ";",
+					"    listen 0.0.0.0:" + loadbalancerPort + ";",
 					"    ",
 					"    location / {",
 					"      proxy_pass http://backend;",
@@ -81,8 +82,9 @@ public class TestClass {
 					"  }",
 					"  ",
 					"  upstream backend {",
-					"    server localhost:" + serverPort + ";",
+					"    server host.docker.internal:" + serverPort + ";",
 					"  }",
+					"  ",
 					"  client_max_body_size 10M;",
 					"}"
 				);
@@ -90,8 +92,12 @@ public class TestClass {
 				Files.write(nginxConfTempFilePath, nginxConf, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
 				File outputTempFile = File.createTempFile("output", null);
 				File errorTempFile = File.createTempFile("error", null);
+				String[] command = PlatformDependent.isWindows() || PlatformDependent.isOsx()
+						? new String[] { "docker", "run", "--rm", "--detach", "--publish", loadbalancerPort + ":" + loadbalancerPort, "--volume", nginxConfTempFilePath + ":/etc/nginx/nginx.conf:ro", "nginx" }
+						: new String[] { "docker", "run", "--rm", "--detach", "--add-host", "host.docker.internal:host-gateway", "--publish", loadbalancerPort + ":" + loadbalancerPort, "--volume", nginxConfTempFilePath + ":/etc/nginx/nginx.conf:ro", "nginx" };
+				LOGGER.info("Using command '{}'", String.join(" ", command));
 				Process process = new ProcessBuilder()
-						.command("docker", "run", "--rm", "--detach", "--network", "host", "--volume", nginxConfTempFilePath + ":/etc/nginx/nginx.conf:ro", "nginx")
+						.command(command)
 						.redirectOutput(outputTempFile)
 						.redirectError(errorTempFile)
 						.start();
@@ -259,7 +265,7 @@ public class TestClass {
 	public RepeatRule repeatRule = new RepeatRule();
 	
 	@Test
-	@Repeat(10)
+	@Repeat(1000)
 	public void test(TestContext context) {
 		Vertx vertx = runTestOnContext.vertx();
 		Future<HttpServer> httpServerFuture = startVertxHttpServer(vertx, HTTP_SERVER_PORT, LOG_ACTIVITY);
